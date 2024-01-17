@@ -1,0 +1,300 @@
+#include <U8g2lib.h>
+#include <Wire.h>
+#include <splash.h>
+#include <SPI.h>
+#include <SD.h>
+
+U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0,SCL,SDA,U8X8_PIN_NONE); // Initialize the OLED display
+
+// voltage & Current sensor
+#define voltageSensorPin 34 // Analog pin the sensor is connected to
+#define currentSensorPin 35
+int sensor_Value;
+float voltage;
+float current_mA;
+int current_sensor_value;
+// Floats for resistor values in divider (in ohms)
+float R1 = 30000.0;
+float R2 = 7500.0; 
+void voltage_sensor();
+void current_sensor();
+
+// SD card
+#define chipSelect 33
+File dataFile; 
+void writeDataToSD();
+
+// Encoder
+int encode_L = 36;  // The pin the encoder is connected    
+int encode_R = 39;    // the pin the encoder is connected        
+unsigned int rpm1,rpm2;    // rpm reading 
+volatile byte pulses1,pulses2;  // number of pulses
+unsigned long timeold1,timeold2; 
+unsigned int pulsesperturn = 20;
+unsigned int rpm1returnvalue = rpm1;
+unsigned int rpm2returnvalue = rpm2;
+int rpm_L();
+int rpm_R();
+void counter1();
+void counter2();
+
+// Colour Sensor_____________________
+#define S0 23
+#define S1 1
+#define S2 3
+#define S3 19
+#define sensorOut 35
+int redMin=24;
+int redMax=426;
+int greenMin=28;
+int greenMax=411;
+int blueMin=11;
+int blueMax=130;
+int redpulsewidth=0;
+int greenpulsewidth=0;
+int bluepulsewidth=0;
+long redValue;
+long greenValue;
+long blueValue;
+void colour();
+void display_colour(int ch);
+//_____________________________________
+void setup() {
+  // OLED Start
+  u8g2.begin();
+  u8g2.setFont(u8g2_font_ncenB14_tr); // Choose a font
+  u8g2.drawStr(20, 20, "Project"); // Display the text at coordinates x=0, y=30
+  u8g2.drawStr(0, 40, "LFR Bot");
+  u8g2.drawStr(0, 60, "Engineers"); 
+  u8g2.sendBuffer(); // Send the buffer to the display 
+  // Setting the colour sensor
+  pinMode(S0, OUTPUT);
+  pinMode(S1, OUTPUT);
+  pinMode(S2, OUTPUT);
+  pinMode(S3, OUTPUT);
+  
+  // Setting the sensorOut as an input
+  pinMode(sensorOut, INPUT);
+  
+  // Setting frequency scaling to 20%
+  digitalWrite(S0,HIGH);
+  digitalWrite(S1,LOW);
+  
+  // Begins serial communication
+  Serial.begin(9600);
+
+   pinMode(encode_L,INPUT);
+   pinMode(encode_R,INPUT);
+   pinMode(voltageSensorPin,INPUT);
+   pinMode(currentSensorPin,INPUT); 
+   pinMode(chipSelect,OUTPUT);  
+   attachInterrupt(0, counter1, FALLING);
+   attachInterrupt(1, counter2, FALLING);
+
+   pulses1 = 0;
+   rpm1 = 0;
+   timeold1 = 0;
+   pulses2 = 0;
+   rpm2 = 0;
+   timeold2 = 0;
+
+  if (!SD.begin(chipSelect)) {
+    Serial.println("SD card initialization failed!");
+    return;
+  }
+
+  if (SD.exists("dataFile.txt")) { // if "file.txt" exists, fill will be deleted
+    Serial.println("File exists.");
+    if (SD.remove("dataFile.txt") == true) {
+      Serial.println("Successfully removed file.");
+    } else {
+      Serial.println("Could not removed file.");
+    }
+  }
+
+}
+
+void loop()
+{
+u8g2.clearBuffer(); // Clear the buffer
+rpm_L();
+rpm_R();
+colour();
+voltage_sensor();
+current_sensor();
+writeDataToSD(rpm1returnvalue,rpm2returnvalue);
+
+  
+}
+void colour(){
+  redpulsewidth=getRedPW();
+  redValue=map(redpulsewidth ,redMin ,redMax ,255 ,0 );
+  //delay (200);
+
+  greenpulsewidth=getGreenPW();
+  greenValue=map(greenpulsewidth ,greenMin ,greenMax ,255 ,0 );
+  //delay (200);
+
+  bluepulsewidth=getBluePW();
+  blueValue=map(bluepulsewidth ,blueMin ,blueMax ,255 ,0 );
+  //delay (200);
+
+  //printing output to serial monitor
+  Serial.print(" RED PW = ");
+  Serial.print(redpulsewidth);
+  
+
+  Serial.print(" - GREEN PW =  ");
+  Serial.print(greenpulsewidth);
+  
+
+  Serial.print(" - BLUE PW = " );
+  Serial.print(bluepulsewidth);
+  
+
+  // Checks the current detected color and prints
+  // a message in the serial monitor
+  /*if(redpulsewidth > greenpulsewidth && redpulsewidth > bluepulsewidth){
+      Serial.println(" - BLACK detected!");
+  }*/
+  
+  if(greenpulsewidth > redpulsewidth && greenpulsewidth > bluepulsewidth){
+    Serial.println(" - RED Abstacle Detected!");
+    display_colour(1);
+  }
+  /* if(bluepulsewidth > redpulsewidth && bluepulsewidth > greenpulsewidth ){
+    Serial.println(" - BLUE detected!");
+  }*/
+  else {
+ // if(redMax > redpulsewidth && greenMax > greenpulsewidth && blueMax > greenpulsewidth)
+  Serial.println(" - No Colour!");
+  display_colour(0);
+  }
+}
+
+int getRedPW()
+{
+  digitalWrite(S2,LOW);
+  digitalWrite(S3,LOW);
+
+  int PW;
+
+  PW = pulseIn (sensorOut, LOW);
+  return PW;
+}
+
+int getGreenPW()
+{
+  digitalWrite(S2,HIGH);
+  digitalWrite(S3,HIGH);
+
+  int PW;
+
+  PW = pulseIn (sensorOut, LOW);
+  return PW;
+}
+
+int getBluePW()
+{
+  digitalWrite(S2,LOW);
+  digitalWrite(S3,HIGH);
+
+  int PW;
+
+  PW = pulseIn (sensorOut, LOW);
+  return PW;
+}
+void display_colour(int clr){
+
+  u8g2.drawStr(0, 60, "Colour:"); // Display the text at coordinates x=0, y=30
+  switch (clr){
+    case 1:
+    u8g2.drawStr(80, 60, "Red"); // Display the text at coordinates x=0, y=30
+    Serial.print(" i am red ");
+    break;
+    case 0:
+    u8g2.drawStr(80, 60, "!!!!"); // Display the text at coordinates x=0, y=30
+    Serial.print(" error ");
+    break;
+  }
+  u8g2.sendBuffer(); // Send the buffer to the display 
+//    delay(800);
+}
+int rpm_L(){
+if (millis() - timeold1 >= 1000){ 
+   detachInterrupt(encode_L);
+   rpm1 = (60 * 1000 / pulsesperturn )/ (millis() - timeold1)* pulses1;
+   timeold1 = millis();
+   pulses1 = 0;
+   Serial.print("RPM_L = ");
+   Serial.println(rpm1,DEC);
+   attachInterrupt(encode_L,counter1, FALLING);
+   return rpm1;
+}
+}
+int rpm_R(){
+   if (millis() - timeold2 >= 1000){  
+   detachInterrupt(encode_R);
+   rpm2 = (60 * 1000 / pulsesperturn )/ (millis() - timeold2)* pulses2;
+   timeold2 = millis();
+   pulses2 = 0;
+   Serial.print("RPM_R = ");
+   Serial.println(rpm2,DEC);
+   attachInterrupt(encode_R, counter2, FALLING);
+   return rpm2;
+   }
+   }
+
+void counter1()
+ {
+    //Update count
+      pulses1++;    
+ }
+ void counter2()
+ {
+    //Update count
+      pulses2++;    
+ }
+
+ void voltage_sensor()
+ {
+ sensor_Value = analogRead(voltageSensorPin);
+ voltage = (sensor_Value * 3.3)/ 4095.0;
+  voltage=(voltage/ (R2/(R1+R2))) ;
+  Serial.print("Voltage(V): ");
+  Serial.print(voltage);
+  char vlt[5];
+  dtostrf(voltage, 3, 1, vlt);
+  u8g2.drawStr(0, 20, vlt);
+  u8g2.drawStr(30, 20, "V,");
+  u8g2.sendBuffer(); // Send the buffer to the display 
+ }
+
+ void current_sensor()
+ {
+  current_mA = map(current_sensor_value, 0, 4095, 0, 5000);
+  current_sensor_value = analogRead(currentSensorPin);
+  Serial.print("Current(mA): ");
+  Serial.println(current_mA);
+  char curent[3];
+  dtostrf(current_mA, 2, 1,curent);
+  u8g2.drawStr(60, 20, curent);
+  u8g2.drawStr(90, 20, "mA");
+  u8g2.sendBuffer(); // Send the buffer to the display 
+ }
+ void writeDataToSD(unsigned int rpm1returnvalue,unsigned int rpm2returnvaluea) {
+  // Open or create a file on the SD card
+  dataFile = SD.open("dataFile.txt", FILE_WRITE); // Change the file name as needed
+  // If the file opened successfully, write data to it
+  if (dataFile) {
+    dataFile.print("RPM_L: ");
+    dataFile.println(rpm1);
+    dataFile.print("RPM_R: ");
+    dataFile.println(rpm2);
+    dataFile.close();
+    Serial.println("Rpm values write"); 
+  }/* else {
+    Serial.println("Could not open file (writing).");
+  }*/
+  // delay(1000);
+}
